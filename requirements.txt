@@ -1,0 +1,14 @@
+fastapi
+sqlalchemy
+mysqlclient
+uvicorn[standard]
+toml
+
+# dev
+pytest
+requests
+
+# graphql
+flask
+graphql-server
+graphene_sqlalchemy==3.0.0b3

@@ -1,0 +1,91 @@
+{
+  "task": {
+    "task_id": "59",   # task.task_id
+    "task_name": "Task 59: iris (Supervised Classification)",  #  Generated
+    "task_type_id": "1",  #  task.ttid
+    "task_type": "Supervised Classification",  #  task_type.name
+    "input": [  #  task_inputs
+      {
+        "name": "source_data",  `input`
+        "data_set": {           `
+          "data_set_id": "61",  `value where input=source_data`
+          "target_feature": "class"  `value where input=target_feature`
+        }
+      },
+      {  task_type_inout linked with ttid
+        "name": "estimation_procedure",
+        "estimation_procedure": {  `estimation_procedure` data where `task_inputs` estimation_procedure
+          "id": "1",
+          "type": "crossvalidation",
+          "data_splits_url": "https://api.openml.org/api_splits/get/59/Task_59_splits.arff",  # based on the template_api column
+          "parameter": [
+            {
+              "name": "number_repeats",
+              "value": "1"
+            },
+            {
+              "name": "number_folds",
+              "value": "10"
+            },
+            {
+              "name": "percentage"
+            },
+            {
+              "name": "stratified_sampling",
+              "value": "true"
+            }
+          ]
+        }
+      },
+      {
+        "name": "cost_matrix",
+        "cost_matrix": []
+      },
+      {
+        "name": "evaluation_measures",
+        "evaluation_measures": {
+          "evaluation_measure": "predictive_accuracy"
+        }
+      }
+    ],
+    "output": {
+      "name": "predictions",
+      "predictions": {
+        "format": "ARFF",
+        "feature": [
+          {
+            "name": "repeat",
+            "type": "integer"
+          },
+          {
+            "name": "fold",
+            "type": "integer"
+          },
+          {
+            "name": "row_id",
+            "type": "integer"
+          },
+          {
+            "name": "confidence.classname",
+            "type": "numeric"
+          },
+          {
+            "name": "prediction",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "tag": [  # task_tag.id
+      "basic",
+      "study_1",
+      "study_41",
+      "study_50",
+      "study_7",
+      "study_89",
+      "testsuite",
+      "under100k",
+      "under1m"
+    ]
+  }
+}

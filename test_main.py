@@ -6,7 +6,7 @@ import pytest
 
 client = TestClient(app)
 
-filetable_too_small = {2, 15, 62}  # because only first 2k rows
+filetable_too_small = {2, 15, 61, 62}  # because only first 2k rows
 private_datasets = {45, 47} #  412
 missing_datasets = set(list(range(63, 70)) + list(range(79, 101)))  # 111
 downloadable_datasets = set(range(1, 101)) - filetable_too_small - private_datasets - missing_datasets

@@ -31,8 +31,6 @@ def read_item(dataset_id: int):
 
   description["upload_date"] = description["upload_date"].strftime(r"%Y-%m-%dT%H:%M:%S")
   description["description"] = description["description"].replace("\r","").strip()
-  if description["description"] == "":
-    description['description'] = []
   description["id"] = description["did"]
   description["md5_checksum"] = description["md5_hash"]
 
@@ -44,14 +42,29 @@ def read_item(dataset_id: int):
       if ',' in description[field]:
         description[field] = [person.strip().replace('"', '') for person in description[field].split(",")]
       else:
-        description[field] = description[field].strip()
+        description[field] = [description[field].strip()]
+
+  if isinstance(description.get("ignore_attribute"), str):
+    description["ignore_attribute"] = description["ignore_attribute"].replace('"', '')
+
+  # Parquet url only exists in the API, not the database:
+  # ./openml_OS/models/api/v1/Api_data.php:767:      $dataset->parquet_url = 'http://openml1.win.tue.nl/dataset' . $data_id . '/dataset_' . $data_id . '.pq';
+  minio_url = f"http://openml1.win.tue.nl/dataset{dataset_id}/dataset_{dataset_id}.pq"
+  description["parquet_url"] = description["minio_url"] = minio_url
+
+  return convert_dataset_description_to_old_format(description)
+
+def convert_dataset_description_to_old_format(description):
+  if description["description"] == "":
+    description['description'] = []
+  
+  for field in ["creator", "contributor"]:
+    if isinstance(description.get(field), list) and len(description[field]) == 1:
+      description[field] = description[field][0]
 
   for k, v in description.items():
     if not isinstance(v, list):
       description[k] = str(description[k])
-  
-  if isinstance(description.get("ignore_attribute"), str):
-    description["ignore_attribute"] = description["ignore_attribute"].replace('"', '')
 
   if len(description["tag"]) == 1:
     description["tag"] = description["tag"][0]
@@ -68,10 +81,5 @@ def read_item(dataset_id: int):
 
   for field in [f for f in ignored_fields if f in description]:
     del description[field]
-
-  # Parquet url only exists in the API, not the database:
-  # ./openml_OS/models/api/v1/Api_data.php:767:      $dataset->parquet_url = 'http://openml1.win.tue.nl/dataset' . $data_id . '/dataset_' . $data_id . '.pq';
-  minio_url = f"http://openml1.win.tue.nl/dataset{dataset_id}/dataset_{dataset_id}.pq"
-  description["parquet_url"] = description["minio_url"] = minio_url
 
   return {k: v for k, v in description.items() if v is not None and v != 'None'}

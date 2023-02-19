@@ -1,5 +1,6 @@
 from collections import defaultdict
 
+import sqlalchemy
 from flask import Flask
 from graphql_server.flask import GraphQLView
 
@@ -8,7 +9,7 @@ from graphene import relay
 from graphene_sqlalchemy import SQLAlchemyObjectType, SQLAlchemyConnectionField
 
 from sqlalchemy.ext.automap import automap_base
-from sqlalchemy import create_engine, MetaData
+from sqlalchemy import create_engine, MetaData, func
 from sqlalchemy import inspect, select, tuple_, and_
 from sqlalchemy.orm import scoped_session, sessionmaker, Session
 
@@ -48,37 +49,84 @@ def generate_graphql_for(tables):
 
     def filter(self, info, **args):
         class_ = args.get("class_")
-        query = class_.get_query(info)
-        # breakpoint()
-        # session = class_.sesh
-        alt_query = select(class_._meta.model)
+        query = select(class_._meta.model)
+
+        # no symbols: =
+        # =: EQ
+        # >: GT
+        # X...Y: X<=_<Y
+        # contains:
+        # in:,,,,
+        def create_clause(field, expr):
+            if "..." in expr:
+                dot_start, dot_end = expr.index("..."), expr.index("...") + 3
+                first, last = expr[:dot_start], expr[dot_end:]
+                return and_(first < field, field < last)
+            if expr.startswith("contains:"):
+                return field.contains(expr[len("contains:"):])
+            if expr.startswith("in:"):
+                values = expr[len("in:"):].split(",")
+                return field.in_(values)
+            if expr.startswith(">="):
+                return field >= float(expr[len(">="):])
+            if expr.startswith(">"):
+                return field > float(expr[len(">"):])
+            if expr.startswith("<="):
+                return field <= float(expr[len("<="):])
+            if expr.startswith("<"):
+                return field < float(expr[len("<"):])
+            if expr.startswith("="):
+                return field == expr[len("="):]
+            if expr.isalnum():
+                return field == expr
+            raise RuntimeError(f"{field=}, {expr=}")
+
+            # # not sure if want to use regex, e.g.:
+            # # re.(r"(^=[\w\d]+$|^[\w\d]+=$)")
+            # if field[0] == '=' and field[1:].isalnum()
 
         for f, v in args.items():
             if f not in ["class_", "sort", "first", "last", "before", "after"]:
+
                 if f == "desc":
                     f = "description"
-                if f != "status":
-                    alt_query = query.where(getattr(class_._meta.model, f).contains(v))
-                    query = query.filter(getattr(class_._meta.model, f).contains(v))
-                # else:
-                #     current_status = select(DatasetStatus.did, func.max(DatasetStatus.status_date)) \
-                #         .group_by(DatasetStatus.did)
-                #     super_query = select(DatasetStatus) \
-                #         .where(
-                #         tuple_(DatasetStatus.did, DatasetStatus.status_date) \
-                #             .in_(current_status.scalar_subquery())
-                #     )
-                #     query = query.filter()
+                if f == "status" and class_._meta.model.__name__ == "dataset":
+                    Dataset = tables['dataset']
+                    DatasetStatus = tables['dataset_status']
+                    current_status = select(DatasetStatus.did, func.max(DatasetStatus.status_date)) \
+                        .group_by(DatasetStatus.did)
+                    super_query = select(DatasetStatus.did) \
+                        .where(
+                        and_(
+                            tuple_(DatasetStatus.did, DatasetStatus.status_date) \
+                                .in_(current_status.scalar_subquery()),
+                                DatasetStatus.status == v
+                        )
+                    )
+                    query = query.where(Dataset.did.in_(super_query.scalar_subquery()))
+                else:
+                    clause = create_clause(getattr(class_._meta.model, f), v)
+                    query = query.where(clause)
 
-        alt_results = Session(create_engine(database_url)).execute(alt_query).all()
-        results = query.all()
-        # breakpoint()
-        return [t for t, in alt_results]
+        results = Session(create_engine(database_url)).execute(query).all()
+        return [t for t, in results]
 
     extras = defaultdict(dict)
     extras['dataset'] = {
         'status': graphene.String()
     }
+
+    def mysql_to_graphql(type_):
+        if issubclass(type_, sqlalchemy.sql.sqltypes.Integer):
+            return graphene.Int()
+        if issubclass(type_, sqlalchemy.sql.sqltypes.Float):
+            return graphene.Float()
+        if issubclass(type_, sqlalchemy.sql.sqltypes.String):
+            return graphene.String()
+        if issubclass(type_, sqlalchemy.sql.sqltypes.DateTime):
+            return graphene.String()
+        raise KeyError(f"{type_=}")
+
     Query = type(
         "Query",
         (graphene.ObjectType,),
@@ -88,8 +136,9 @@ def generate_graphql_for(tables):
                 f"{obj.__name__}": SQLAlchemyConnectionField(
                     obj.connection,
                     **{
-                        column if column != "description" else "desc": graphene.String()
-                        for column in inspect(obj._meta.model).columns.keys()
+                        col_name if col_name != "description" else "desc": graphene.String()
+                        # mysql_to_graphql(type(column.type))
+                        for col_name, column in inspect(obj._meta.model).columns.items()
                     },
                     **extras[obj.__name__]
                 )
@@ -121,10 +170,8 @@ if __name__ == "__main__":
         engine,
     )
     Base = automap_base(metadata=metadata)
-    q = db_session.query_property()
-    # breakpoint()
-    Base.query = q  # db_session.query_property()
-    # Base.sesh = db_session
+    Base.query = db_session.query_property()
+    # How do we appropriately use the session with the 2.0 `select` syntax?
     Base.prepare()
 
     # 2. Generate GraphQL schema from ORM

@@ -9,7 +9,7 @@ from graphene import relay
 from graphene_sqlalchemy import SQLAlchemyObjectType, SQLAlchemyConnectionField
 
 from sqlalchemy.ext.automap import automap_base
-from sqlalchemy import create_engine, MetaData, func
+from sqlalchemy import create_engine, MetaData, func, not_
 from sqlalchemy import inspect, select, tuple_, and_
 from sqlalchemy.orm import scoped_session, sessionmaker, Session
 
@@ -47,43 +47,49 @@ def generate_graphql_for(tables):
         for table in tables.values()
     ]
 
+    qualities = Session(create_engine(database_url)).execute(select(tables['quality'].name)).all()
+    qualities = [q for q, in qualities if q.isalnum()]
+
     def filter(self, info, **args):
         class_ = args.get("class_")
         query = select(class_._meta.model)
 
-        # no symbols: =
-        # =: EQ
-        # >: GT
-        # X...Y: X<=_<Y
-        # contains:
-        # in:,,,,
         def create_clause(field, expr):
+            if expr.startswith("!"):
+                use_not = True
+                expr = expr[1:]
+            else:
+                use_not = False
+
             if "..." in expr:
                 dot_start, dot_end = expr.index("..."), expr.index("...") + 3
                 first, last = expr[:dot_start], expr[dot_end:]
-                return and_(first < field, field < last)
+                clause = and_(first < field, field < last)
             if expr.startswith("contains:"):
-                return field.contains(expr[len("contains:"):])
+                clause = field.contains(expr[len("contains:"):])
             if expr.startswith("in:"):
                 values = expr[len("in:"):].split(",")
-                return field.in_(values)
+                clause = field.in_(values)
             if expr.startswith(">="):
-                return field >= float(expr[len(">="):])
+                clause = field >= float(expr[len(">="):])
             if expr.startswith(">"):
-                return field > float(expr[len(">"):])
+                clause = field > float(expr[len(">"):])
             if expr.startswith("<="):
-                return field <= float(expr[len("<="):])
+                clause = field <= float(expr[len("<="):])
             if expr.startswith("<"):
-                return field < float(expr[len("<"):])
+                clause = field < float(expr[len("<"):])
             if expr.startswith("="):
-                return field == expr[len("="):]
+                clause = field == expr[len("="):]
             if expr.isalnum():
-                return field == expr
+                clause = field == expr
+            if use_not:
+                return not_(clause)
+            else:
+                return clause
             raise RuntimeError(f"{field=}, {expr=}")
 
-            # # not sure if want to use regex, e.g.:
-            # # re.(r"(^=[\w\d]+$|^[\w\d]+=$)")
-            # if field[0] == '=' and field[1:].isalnum()
+            # not sure if want to use regex, e.g.:
+            # re.(r"(^=[\w\d]+$|^[\w\d]+=$)")
 
         for f, v in args.items():
             if f not in ["class_", "sort", "first", "last", "before", "after"]:
@@ -104,6 +110,12 @@ def generate_graphql_for(tables):
                         )
                     )
                     query = query.where(Dataset.did.in_(super_query.scalar_subquery()))
+                elif f in qualities and class_._meta.model.__name__ == "dataset":
+                    DataQuality = tables['data_quality']
+                    clause = create_clause(getattr(DataQuality, "value"), v)
+                    matching_datasets = select(DataQuality.data).where(and_(DataQuality.quality_name == f, clause))
+                    Dataset = tables['dataset']
+                    query = query.where(Dataset.did.in_(matching_datasets.scalar_subquery()))
                 else:
                     clause = create_clause(getattr(class_._meta.model, f), v)
                     query = query.where(clause)
@@ -113,19 +125,20 @@ def generate_graphql_for(tables):
 
     extras = defaultdict(dict)
     extras['dataset'] = {
-        'status': graphene.String()
+        'status': graphene.String(),
+        **{q: graphene.String() for q in qualities}
     }
 
-    def mysql_to_graphql(type_):
-        if issubclass(type_, sqlalchemy.sql.sqltypes.Integer):
-            return graphene.Int()
-        if issubclass(type_, sqlalchemy.sql.sqltypes.Float):
-            return graphene.Float()
-        if issubclass(type_, sqlalchemy.sql.sqltypes.String):
-            return graphene.String()
-        if issubclass(type_, sqlalchemy.sql.sqltypes.DateTime):
-            return graphene.String()
-        raise KeyError(f"{type_=}")
+    # def mysql_to_graphql(type_):
+    #     if issubclass(type_, sqlalchemy.sql.sqltypes.Integer):
+    #         return graphene.Int()
+    #     if issubclass(type_, sqlalchemy.sql.sqltypes.Float):
+    #         return graphene.Float()
+    #     if issubclass(type_, sqlalchemy.sql.sqltypes.String):
+    #         return graphene.String()
+    #     if issubclass(type_, sqlalchemy.sql.sqltypes.DateTime):
+    #         return graphene.String()
+    #     raise KeyError(f"{type_=}")
 
     Query = type(
         "Query",
